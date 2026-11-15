@@ -4,6 +4,9 @@ import { fmt, fix, gcd } from './lib.js';
 // ---------- 标记渲染 ----------
 const escHTML = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const fracHTML = (n, d) => `<span class="frac"><span class="fn">${n}</span><span class="fd">${d}</span></span>`;
+/** [[春天|chūn tiān]] → 每个字上方注音 */
+const rubyHTML = (hz, py) => { const cs = [...hz], ps = py.trim().split(/\s+/); return `<span class="py">${cs.map((c, i) => `<ruby>${c}<rt>${ps[i] ?? ''}</rt></ruby>`).join('')}</span>`; };
+const RUBY = /\[\[([^|\]]+)\|([^\]]+)\]\]/g;
 
 /** 题干 / 讲解标记 → HTML。blank(k) 返回第 k 个答题空的 HTML */
 export function renderMarkup(text, blank) {
@@ -12,7 +15,8 @@ export function renderMarkup(text, blank) {
   s = escHTML(s)
     .replace(/\{\{\s*(-?\d+)\s+(\d+)\/(\d+)\s*\}\}/g, (_, w, n, d) => `<span class="mixed">${w}${fracHTML(n, d)}</span>`)
     .replace(/\{\{\s*(-?\d+)\/(\d+)\s*\}\}/g, (_, n, d) => fracHTML(n, d))
-    .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+    .replace(RUBY, (_, hz, py) => rubyHTML(hz, py))
+    .replace(/\*\*(.+?)\*\*/g, (_, x) => { const t = x.replace(/<rt>.*?<\/rt>/g, '').replace(/<[^>]+>/g, ''), n = (t.match(/\p{Script=Han}/gu) || []).length; return `<b class="${!n ? 'em-no' : n > 4 ? 'em-line' : 'em-dot'}">${x}</b>`; })
     .replace(/\n/g, '<br>');
   if (blank) s = s.replace(/\{(\d+)\}/g, (_, k) => blank(+k));
   return s.replace(/\u0000(\d+)\u0000/g, (_, i) => svgs[+i]);
@@ -23,6 +27,7 @@ export function plainText(text) {
   return String(text).replace(/<svg[\s\S]*?<\/svg>/g, '[图]')
     .replace(/\{\{\s*(-?\d+)\s+(\d+)\/(\d+)\s*\}\}/g, '$1又$2/$3')
     .replace(/\{\{\s*(-?\d+)\/(\d+)\s*\}\}/g, '$1/$2')
+    .replace(RUBY, '$1（$2）')
     .replace(/\*\*(.+?)\*\*/g, '$1')
     .replace(/\{(\d+)\}/g, '（ ）');
 }
@@ -35,6 +40,8 @@ export function answerText(a) {
     case 'ratio': return pre + a.value.join(':');
     case 'choice': return pre + a.value;
     case 'text': return pre + (Array.isArray(a.value) ? a.value[0] : a.value);
+    case 'hanzi': return pre + a.value;
+    case 'order': return pre + a.value.join(a.sep ?? '');
   }
   return '';
 }
@@ -65,6 +72,10 @@ export function gradeBlank(a, v, ctx = {}) {
   switch (a.kind) {
     case 'num': { const n = normNum(v); if (n === null) return { ok: false, empty: !String(v ?? '').trim() }; return { ok: Math.abs(fix(n) - fix(a.value)) < 1e-9 }; }
     case 'choice': return { ok: v === a.value, empty: v == null };
+    // 写字：v = { text: 写出的字, fails: 提示后才写出 / 放弃的字数 }
+    case 'hanzi': { const t = v?.text || ''; if (!t) return { ok: false, empty: true }; return { ok: t === a.value && !v.fails, msg: t === a.value && v.fails ? '有的字是看了提示才写出来的，再写一遍记牢' : '' }; }
+    // 排序：v = 卡片顺序（字符串数组）
+    case 'order': { if (!Array.isArray(v) || !v.length) return { ok: false, empty: true }; if (v.length < a.value.length) return { ok: false, msg: '还有卡片没排进去' }; const sep = a.sep ?? '', got = v.join(sep); return { ok: [a.value, ...(a.alts || [])].some((x) => x.join(sep) === got) }; }
     case 'text': { const norm = (x) => String(x ?? '').replace(/\s/g, '').toLowerCase(); const vals = Array.isArray(a.value) ? a.value : [a.value]; return { ok: vals.some((x) => norm(x) === norm(v)), empty: !norm(v) }; }
     case 'frac': {
       const w = v?.w ? toInt(v.w) : 0, n = toInt(v?.n), d = toInt(v?.d);

@@ -4,6 +4,7 @@ import { Pad } from './pad.js';
 import * as R from './rewards.js';
 import { mascot, speak, stopSpeak, ring, unitStyle } from './ui.js';
 import { callDirect, PRESETS } from './ai.js';
+import * as YW from './yw.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -26,7 +27,18 @@ async function loadContent() {
       GRADES_LOADED.push(g);
     } catch (e) { console.warn('年级', g, '题库没加载：', e.message); }
   }
+  try {
+    const { FILES } = await import('../content/yw/index.js');
+    const mods = await Promise.all(FILES.map((f) => import(`../content/yw/${f}.js`).catch((e) => { console.warn('语文', f, '没加载：', e.message); return null; })));
+    for (const m of mods) for (const sk of m?.default || []) { if (BY[sk.id]) continue; SK.push(sk); BY[sk.id] = sk; }
+  } catch (e) { console.warn('语文题库没加载：', e.message); }
 }
+const subj = (sk) => sk.subject || 'math';
+const SUBJECTS = { math: { name: '数学', icon: '🔢' }, yw: { name: '语文', icon: '📖' } };
+const curSubject = () => homeView?.subject || P.subject || 'math';
+const subjSK = (sub = curSubject()) => SK.filter((s) => subj(s) === sub);
+// 语文板块的固定顺序
+const YW_UNITS = ['拼音', '识字写字', '字音字形', '词语积累', '句子', '标点与修辞', '古诗文', '积累运用', '阅读方法'];
 async function loadProgress() {
   let local = null, remote = null;
   try { local = JSON.parse(localStorage.getItem('mc:' + PROFILE)); } catch {}
@@ -133,7 +145,7 @@ function combo(n, host) {
   sound('combo');
 }
 const streakDays = () => R.dayStreak(P);
-const skillsOf = (g, t) => SK.filter((s) => s.grade === g && s.term === t);
+const skillsOf = (g, t, sub = curSubject()) => { const l = SK.filter((s) => s.grade === g && s.term === t && subj(s) === sub); return sub === 'yw' ? l.sort((a, b) => YW_UNITS.indexOf(a.unit) - YW_UNITS.indexOf(b.unit)) : l; };
 const statusLabel = { new: '', learning: '练习中', mastered: '已掌握', due: '该复习' };
 const stepsHTML = (steps) => steps.map((s) => (typeof s === 'string' ? `<li>${C.renderMarkup(s)}</li>` : `<li class="pre"><pre>${esc(s.pre)}</pre></li>`)).join('');
 
@@ -157,6 +169,7 @@ function checkRewards() {
   save();
 }
 const shouldRead = (sk) => P.settings.readAloud === 'on' || (P.settings.readAloud === 'auto' && sk.grade <= 2 && !sk.speed);
+const readProblem = (p) => (p.say ? speak(`${p.say}。${p.say}。`) : speak(p.q));
 function greet() { const h = new Date().getHours(); return h < 5 ? '夜深了' : h < 11 ? '早上好' : h < 13 ? '中午好' : h < 18 ? '下午好' : '晚上好'; }
 
 // ---------------- 首页 ----------------
@@ -164,10 +177,10 @@ let homeView = null;
 function leave() { S = null; stopTimer(); stopChallenge(); stopSpeak(); }
 function showHome() {
   leave();
-  homeView ||= { grade: P.grade, term: P.term };
-  const g = homeView.grade, t = homeView.term;
+  homeView ||= { grade: P.grade, term: P.term, subject: P.subject || 'math' };
+  const g = homeView.grade, t = homeView.term, sub = homeView.subject, isYW = sub === 'yw';
   const st = R.stats(P), lv = R.levelOf(st.stars), goal = P.settings.dailyGoal;
-  const plan = C.todayPlan(P, SK);
+  const plan = C.todayPlan(P, subjSK(sub));
   const d = P.days[C.today()] || { n: 0, c: 0 };
   const due = plan.filter((p) => p.target === 'review').length;
   const all = skillsOf(g, t), mastered = all.filter((s) => P.skills[s.id]?.mastered).length;
@@ -176,7 +189,9 @@ function showHome() {
   const msg = d.goal ? '今天的目标完成啦！还想练就挑个题型闯关吧 🎉'
     : due ? `有 ${due} 个学过的题型该复习了，先把它们拿下！`
     : d.n ? `今天做了 ${d.n} 题，离目标还差 ${Math.max(0, goal - d.n)} 题，加油！`
-    : pick([`今天的目标是 ${goal} 题，一起开始吧！`, '每天练一点，数学越来越厉害！', '准备好了吗？点「今日任务」出发！']);
+    : pick([`今天的目标是 ${goal} 题，一起开始吧！`, isYW ? '每天练一点，字写得越来越漂亮！' : '每天练一点，数学越来越厉害！', '准备好了吗？点「今日任务」出发！']);
+  let dict = isYW ? all.filter((s) => /听写/.test(s.name)) : [];
+  if (isYW && !dict.length) dict = all.filter((s) => s.name === '看拼音写字'); // 一上还没有词语听写，先写单字
   const tag = (p) => p.target === 'review' ? '<span class="tag rv">复习</span>' : P.skills[p.skill.id]?.n ? '<span class="tag go">接着练</span>' : '<span class="tag nw">新学</span>';
   app.innerHTML = `<div class="page home">
     <header class="hello">
@@ -194,12 +209,14 @@ function showHome() {
         <div class="ringbox">${ring(d.n / goal, { size: 116, stroke: 12 })}<div class="ringlab"><b>${d.n}</b><span>/ ${goal} 题</span></div></div>
         <div class="tt"><div class="big">今日任务 ▶</div><div class="list">${plan.length ? plan.map((p) => `<div>${tag(p)}${esc(p.skill.name)}</div>`).join('') : '<div>任务都完成了！挑一个题型自由练吧</div>'}</div></div>
       </button>
-      <button class="tile t-ch" id="goChallenge"><span class="ti">⚡</span><b>口算挑战</b><span>60 秒能答对几题？${st.challengeBest ? `<br>最好 ${st.challengeBest} 题` : ''}</span></button>
+      ${isYW ? `<button class="tile t-ch t-dict" id="goDict"><span class="ti">✍️</span><b>听写</b><span>${dict.length ? '听一听，写一写，本册词语' : '这一册还没有听写'}</span></button>`
+        : `<button class="tile t-ch" id="goChallenge"><span class="ti">⚡</span><b>口算挑战</b><span>60 秒能答对几题？${st.challengeBest ? `<br>最好 ${st.challengeBest} 题` : ''}</span></button>`}
       <button class="tile t-wrong" id="goWrong"><span class="ti">📕</span><b>错题本</b><span>${P.wrong.length ? `${P.wrong.length} 道等你订正` : '空空的，真棒'}</span></button>
       <button class="tile t-test" id="goTest"><span class="ti">📝</span><b>综合测验</b><span>随机出题考考自己</span></button>
       <button class="tile t-me" id="goMe2"><span class="ti">🏅</span><b>我的成就</b><span>徽章 ${Object.keys(st.badges).length} / ${R.BADGES.length}</span></button>
     </div>
     <div class="termbar">
+      <div class="seg subj" id="subjSeg">${Object.entries(SUBJECTS).map(([k, v]) => `<button data-s="${k}" class="${k === sub ? 'on' : ''}">${v.icon} ${v.name}</button>`).join('')}</div>
       <div class="seg" id="gradeSeg">${[1, 2, 3, 4, 5, 6].map((x) => `<button data-g="${x}" class="${x === g ? 'on' : ''}">${C.GRADE_CN[x]}年级</button>`).join('')}</div>
       <div class="seg" id="termSeg"><button data-t="1" class="${t === 1 ? 'on' : ''}">上册</button><button data-t="2" class="${t === 2 ? 'on' : ''}">下册</button></div>
       <div class="grow"></div>
@@ -210,12 +227,14 @@ function showHome() {
       return `<section class="unitsec" style="--uc:${us.c};--ubg:${us.bg}"><div class="unithead"><span class="uicon">${us.icon}</span><span class="uname">${esc(u.name)}</span><span class="ucount">${m} / ${u.list.length}</span><span class="ubar"><i style="width:${(m / u.list.length) * 100}%"></i></span></div><div class="skills">${u.list.map(skillCard).join('')}</div></section>`;
     }).join('') : `<div class="empty">${GRADES_LOADED.includes(g) ? '这一册还没有题型' : '这个年级的题库还在准备中'}</div>`}
   </div>`;
-  const setView = () => { P.grade = homeView.grade; P.term = homeView.term; save(); showHome(); };
+  const setView = () => { P.grade = homeView.grade; P.term = homeView.term; P.subject = homeView.subject; save(); showHome(); };
+  $$('#subjSeg button').forEach((b) => (b.onclick = () => { homeView.subject = b.dataset.s; setView(); }));
   $$('#gradeSeg button').forEach((b) => (b.onclick = () => { homeView.grade = +b.dataset.g; setView(); }));
   $$('#termSeg button').forEach((b) => (b.onclick = () => { homeView.term = +b.dataset.t; setView(); }));
   $$('.sk').forEach((b) => (b.onclick = () => { const sk = BY[b.dataset.id]; const s = C.status(P, sk); startDrill([{ skill: sk, target: s === 'due' ? 'review' : s === 'mastered' ? 'free' : 'master' }], 'drill'); }));
   $('#goToday').onclick = () => plan.length ? startDrill(plan, 'today') : toast('今天的任务都完成了，挑一个题型自由练吧');
-  $('#goChallenge').onclick = showChallenge;
+  if ($('#goChallenge')) $('#goChallenge').onclick = showChallenge;
+  if ($('#goDict')) $('#goDict').onclick = () => { if (!dict.length) return toast('这一册还没有听写题'); const sk = dict.find((s) => !P.skills[s.id]?.mastered) || dict[0]; const s0 = C.status(P, sk); startDrill([{ skill: sk, target: s0 === 'due' ? 'review' : s0 === 'mastered' ? 'free' : 'master' }], 'drill'); };
   $('#goWrong').onclick = showWrongBook;
   $('#goTest').onclick = chooseTest;
   $('#goMe').onclick = $('#goMe2').onclick = () => showMe();
@@ -298,6 +317,7 @@ function ensureShell() {
         <button class="tool" data-act="clear">🗑</button>
       </div>
       <div class="padwrap"><div class="padtip" id="padtip">在这里打草稿、列竖式（用 Apple Pencil 写）</div><canvas id="pad"></canvas></div>
+      <div class="wbox" id="wbox"></div>
     </div></div>`;
   pad = new Pad($('#pad'));
   pad.onChange = () => { $('#padtip').style.display = pad.strokes.length ? 'none' : ''; };
@@ -305,7 +325,9 @@ function ensureShell() {
   $('.tool[data-act=undo]').onclick = () => pad.undo();
   $('.tool[data-act=clear]').onclick = () => pad.clear();
 }
-function exitPractice() { pad = null; showHome(); }
+let HP = null; // 当前题的写字格
+const dropHP = () => { HP?.destroy(); HP = null; };
+function exitPractice() { dropHP(); pad = null; showHome(); }
 
 // ---- 例题 ----
 function exampleBody(sk, p) {
@@ -331,9 +353,10 @@ function showExample(sk) {
       </div>
       <div class="ops"><button class="btn" id="exMore">换一道例题</button><button class="btn pri submit" id="exGo">我看懂了，开始练 →</button></div>`;
     $('#back').onclick = exitPractice;
-    $('#readQ').onclick = () => speak(p.q + '。' + p.steps.filter((s) => typeof s === 'string').join('。'));
+    $('#readQ').onclick = () => speak((p.say ? p.say + '。' : '') + p.q + '。' + p.steps.filter((s) => typeof s === 'string').join('。'));
     $('#exMore').onclick = () => { p = genProblem(sk); draw(); };
     $('#exGo').onclick = () => { stopSpeak(); nextProblem(); };
+    setPane(sk, p, true);
     if (shouldRead(sk)) speak(p.q);
   };
   draw();
@@ -350,6 +373,14 @@ function exampleModal(sk) {
   }, 'wide');
 }
 
+/** 阅读题：题干 = 标题\n各段\n\n问题。拆成短文（横屏放左栏）和问题 */
+function splitPassage(sk, p) {
+  const i = p.q.indexOf('\n\n');
+  if (!(p.passage || sk.unit === '阅读方法') || i < 0) return null;
+  const [title, ...paras] = p.q.slice(0, i).split('\n');
+  return { ask: p.q.slice(i + 2), html: `<div class="ptitle">${C.renderMarkup(title)}</div>${paras.map((t) => `<p>${C.renderMarkup(t)}</p>`).join('')}` };
+}
+
 // ---- 做题 ----
 function renderPractice() {
   const sk = S.skill, p = S.problem, st = C.ss(P, sk.id);
@@ -360,8 +391,11 @@ function renderPractice() {
 
   const need = S.target === 'review' ? 3 : P.settings.streak;
   const dots = S.target === 'test' ? '' : S.target === 'free' ? `<span class="chip fire sm" id="streakChip">🔥 连对 ${st.streak}</span>` : `<div class="dots ${need > 6 ? 'small' : ''}" title="连对 ${st.streak}/${need}">${Array.from({ length: need }, (_, i) => `<i class="${i < st.streak ? 'on' : ''}"></i>`).join('')}</div>`;
-  const { q, after } = layoutQ(p, (a, k) => blankHTML(a, k, kbd));
-  const onlyChoice = p.answer.every((a) => a.kind === 'choice');
+  const isYW = subj(sk) === 'yw';
+  const rd = isYW ? splitPassage(sk, p) : null;
+  const { q, after } = layoutQ(rd ? { ...p, q: rd.ask } : p, (a, k) => blankHTML(a, k, kbd));
+  const needKeys = p.answer.some((a) => ['num', 'frac', 'ratio'].includes(a.kind));
+  const tools = `<div class="qtools"><button class="iconbtn" id="readQ" title="读题">🔊</button>${S.mode !== 'test' ? '<button class="iconbtn" id="exBtn" title="看例题">📖</button>' : ''}</div>`;
 
   $('#left').innerHTML = `
     <div class="ph">
@@ -371,24 +405,42 @@ function renderPractice() {
       <span class="chip gold sm">⭐ <b class="js-stars">${R.stats(P).stars}</b></span>
       <div class="timer" id="timer">0s</div>
     </div>
-    <div class="qcard" id="qcard">
-      <div class="qtools"><button class="iconbtn" id="readQ" title="读题">🔊</button>${S.mode !== 'test' ? '<button class="iconbtn" id="exBtn" title="看例题">📖</button>' : ''}</div>
+    <div class="qcard ${rd ? 'reading' : ''}" id="qcard">
+      ${rd ? `<div class="passage">${tools}${rd.html}</div><div class="askcol">` : tools}
       ${figFirst(p) ? `<div class="fig">${p.fig}</div>` : ''}<div class="q" id="q">${q}</div>
       ${p.fig && !figFirst(p) ? `<div class="fig">${p.fig}</div>` : ''}
       ${after ? `<div class="after q">${after}</div>` : ''}
       ${sk.process && S.target !== 'test' ? '<div class="muted" style="font-size:16px;margin-top:8px">✎ 在草稿纸上写出列式和计算过程，答对后可以请 AI 老师检查过程</div>' : ''}
       <div id="feedback"></div>
+      ${rd ? '</div>' : ''}
     </div>
     <div class="ops" id="ops"></div>
-    ${kbd || onlyChoice ? '' : `<div class="keypad" id="keypad">${['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '.', '-', '⌫', '→'].map((k) => `<button class="${k === '⌫' || k === '→' ? 'fn' : ''}" data-k="${k}">${k === '→' ? '下一格' : k}</button>`).join('')}</div>`}`;
+    ${kbd || !needKeys ? '' : `<div class="keypad" id="keypad">${['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '.', '-', '⌫', '→'].map((k) => `<button class="${k === '⌫' || k === '→' ? 'fn' : ''}" data-k="${k}">${k === '→' ? '下一格' : k}</button>`).join('')}</div>`}`;
   renderOps();
   $('#back').onclick = () => { if (S.mode === 'test' && S.results.length) { if (!confirm('测验还没做完，确定退出吗？')) return; } exitPractice(); };
-  $('#readQ').onclick = () => speak(p.q);
+  $('#readQ').onclick = () => readProblem(p);
   if ($('#exBtn')) $('#exBtn').onclick = () => exampleModal(sk);
+  $('#qcard').classList.toggle('long', isYW && C.plainText(p.q).length > 90);
+  $('#qcard').classList.toggle('yw', isYW);
+  setPane(sk, p);
   bindInputs();
   stopTimer();
   timerId = setInterval(() => { const el = $('#timer'); if (el && !S.answered) el.textContent = Math.round((Date.now() - S.t0) / 1000) + 's'; }, 500);
-  if (S.mode !== 'test' && shouldRead(sk)) speak(p.q); else stopSpeak();
+  if (p.say) setTimeout(() => { if (S && S.problem === p) readProblem(p); }, 300); // 听写一定要读
+  else if (S.mode !== 'test' && shouldRead(sk)) speak(p.q); else stopSpeak();
+}
+/** 右栏：有写字题 → 写字格；语文其他题 → 收起；数学 → 草稿纸 */
+function setPane(sk, p, example = false) {
+  dropHP();
+  const hz = example ? [] : p.answer.map((a, k) => ({ a, k })).filter((x) => x.a.kind === 'hanzi');
+  const pr = $('.practice');
+  pr.classList.toggle('writing', hz.length > 0);
+  pr.classList.toggle('nopad', subj(sk) === 'yw' && !hz.length);
+  if (!hz.length) { $('#wbox').innerHTML = ''; return; }
+  HP = new YW.HanziPad($('#wbox'), hz.map((x) => ({ k: x.k, value: x.a.value })), {
+    onPaint: (slots, cur) => slots.forEach((s, j) => { const el = $(`#left .hzb[data-k="${s.k}"] i[data-i="${s.i}"]`); if (el) { el.textContent = s.done ? s.text : ''; el.className = `${j === cur ? 'cur' : ''} ${s.done ? (s.fail ? 'fail' : 'ok') : ''}`; } }),
+    onDone: () => { if (!S || S.answered || S.problem !== p) return; const v = collect(); if (p.answer.every((a, k) => a.kind === 'hanzi' || !C.gradeBlank(a, v[k]).empty)) setTimeout(submit, 200); },
+  });
 }
 
 function blankHTML(a, k, kbd) {
@@ -399,6 +451,8 @@ function blankHTML(a, k, kbd) {
     case 'ratio': return `${inp('a')}<b>:</b>${inp('b')}`;
     case 'choice': { const long = a.options.some((o) => String(o).length > 3); return `<span class="choice ${long && a.options.length > 2 ? 'col' : ''}" data-k="${k}">${a.options.map((o) => `<button class="${long ? 'long' : ''}" data-v="${esc(o)}">${C.renderMarkup(String(o))}</button>`).join('')}</span>`; }
     case 'text': return `<input class="blank" data-k="${k}" data-sub="v" style="width:6em" autocomplete="off">`;
+    case 'hanzi': return `<span class="hzb" data-k="${k}">${[...a.value].map((_, i) => `<i data-i="${i}"></i>`).join('')}</span>`;
+    case 'order': return YW.orderHTML(a, k);
     default: return inp('v');
   }
 }
@@ -418,8 +472,10 @@ function bindInputs() {
     if (S.answered) return;
     const grp = b.parentElement; $$('button', grp).forEach((x) => x.classList.remove('sel', 'wrong', 'right')); b.classList.add('sel');
     const groups = $$('#left .choice');
-    if (!inputs.length && groups.every((g) => $('button.sel', g))) setTimeout(submit, 150);
+    if (!inputs.length && groups.every((g) => $('button.sel', g)) && S.problem.answer.every((a) => a.kind === 'choice')) setTimeout(submit, 150);
   }));
+  YW.bindOrder($('#left'), (o, full) => { if (full && !inputs.length && S.problem.answer.every((a, k) => a.kind !== 'choice' || $(`#left .choice[data-k="${k}"] button.sel`)) && !S.problem.answer.some((a) => a.kind === 'hanzi')) setTimeout(submit, 250); });
+  $$('#left .hzb').forEach((b) => (b.onclick = () => { if (HP && !S.answered) HP.go(HP.slots.findIndex((s) => s.k === +b.dataset.k)); }));
   $$('#keypad button').forEach((b) => (b.onclick = () => {
     if (S.answered && S.revealed) return;
     const k = b.dataset.k;
@@ -435,6 +491,8 @@ function collect() {
   const p = S.problem;
   return p.answer.map((a, k) => {
     if (a.kind === 'choice') return $(`#left .choice[data-k="${k}"] button.sel`)?.dataset.v ?? null;
+    if (a.kind === 'hanzi') return HP ? HP.value(k) : { text: '', fails: 0 };
+    if (a.kind === 'order') return YW.orderValue($('#left'), k, a);
     const els = $$(`#left input.blank[data-k="${k}"]`);
     if (a.kind === 'num' || a.kind === 'text') return els[0]?.value ?? '';
     const o = {}; els.forEach((e) => (o[e.dataset.sub] = e.value)); return o;
@@ -445,6 +503,8 @@ function givenText(vals) {
     const v = vals[k];
     if (a.kind === 'frac') return v.w ? `${v.w}又${v.n}/${v.d}` : `${v.n || '?'}/${v.d || '?'}`;
     if (a.kind === 'ratio') return `${v.a || '?'}:${v.b || '?'}`;
+    if (a.kind === 'hanzi') return (a.label ? a.label + '：' : '') + (v.text || '（没写完）') + (v.fails ? '（看了提示）' : '');
+    if (a.kind === 'order') return (a.label ? a.label + '：' : '') + (v.length ? v.join(a.sep ?? '') : '（没排）');
     return (a.label ? a.label + '：' : '') + (v ?? '（没选）');
   }).join('；');
 }
@@ -453,6 +513,8 @@ function markBlanks(res) {
     if (a.kind === 'choice') {
       const sel = $(`#left .choice[data-k="${k}"] button.sel`);
       if (sel) sel.classList.add(res[k].ok ? 'right' : 'wrong');
+    } else if (a.kind === 'hanzi' || a.kind === 'order') {
+      const el = $(`#left .${a.kind === 'hanzi' ? 'hzb' : 'ord'}[data-k="${k}"]`); if (el) { el.classList.remove('r-ok', 'r-bad'); el.classList.add(res[k].ok ? 'r-ok' : 'r-bad'); }
     } else $$(`#left input.blank[data-k="${k}"]`).forEach((e) => { e.classList.remove('right', 'wrong'); e.classList.add(res[k].ok ? 'right' : 'wrong'); });
   });
 }
@@ -525,6 +587,7 @@ function submit() {
   const fb = $('#feedback');
   if (ok) {
     S.answered = true; S.revealed = true;
+    $$('#left .ord').forEach((o) => o.classList.add('locked'));
     sound('ok');
     const sec = Math.round(ms / 100) / 10;
     const ev = S.events || {};
@@ -551,8 +614,10 @@ function submit() {
   } else if (S.tries === 1) {
     sound('bad');
     $('#qcard').classList.remove('shake'); void $('#qcard').offsetWidth; $('#qcard').classList.add('shake');
-    fb.insertAdjacentHTML('beforeend', resultBox('try', 'oops', '✗ 不对哦，再检查一下', msgs.length ? msgs.join('；') : pick(['红色的空填错了，改一改再提交。', '别着急，看看草稿哪一步算错了。', '再读一遍题目，改好再提交。'])));
+    const hzWrong = p.answer.some((a, k) => a.kind === 'hanzi' && !res[k].ok);
+    fb.insertAdjacentHTML('beforeend', resultBox('try', 'oops', '✗ 不对哦，再检查一下', msgs.length ? msgs.join('；') : hzWrong ? '看着浅色的字，按笔顺再写一遍错了的字。' : subj(sk) === 'yw' ? pick(['再读一遍题目，想想方法，改好再提交。', '标红的地方不对，改一改再提交。']) : pick(['红色的空填错了，改一改再提交。', '别着急，看看草稿哪一步算错了。', '再读一遍题目，改好再提交。'])));
     renderOps('retry');
+    if (hzWrong && HP) HP.retry();
     refreshDots();
     checkRewards();
   } else {
@@ -572,9 +637,11 @@ function reveal(res) {
   const fb = $('#feedback');
   fb.insertAdjacentHTML('beforeend', resultBox('bad', 'think', `正确答案：${p.answer.map((a) => `<span class="ans">${a.label ? esc(a.label) + ' ' : ''}${C.answerHTML(a)}</span>`).join('　')}`, `<div class="muted" style="font-size:16px">看懂下面每一步，下一道一定行！</div><ol class="steps">${stepsHTML(p.steps)}</ol>`));
   p.answer.forEach((a, k) => { if (a.kind === 'choice') $$(`#left .choice[data-k="${k}"] button`).forEach((b) => { if (b.dataset.v === a.value) b.classList.add('answer'); }); });
+  $$('#left .ord').forEach((o) => o.classList.add('locked'));
+  if (HP) HP.reveal();
   renderOps('next');
   refreshDots();
-  if (P.settings.aiAuto && pad.hasInk()) askAI('diagnose');
+  if (P.settings.aiAuto && pad.hasInk() && subj(S.skill) !== 'yw') askAI('diagnose');
   setTimeout(() => $('#feedback .result.bad')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 50);
 }
 function refreshDots() {
@@ -679,12 +746,12 @@ async function askAI(mode, question) {
   const holder = document.createElement('div'); holder.className = 'tmsg'; holder.textContent = { hint: '老师在想怎么提示你…', diagnose: '老师在看你的草稿…', review: '老师在检查你的过程…', explain: '老师换个方法讲…', chat: '老师在想…' }[mode];
   msgs.append(holder); box.classList.add('loading');
   holder.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  const image = pad.hasInk() ? pad.toDataURL() : null;
+  const image = pad.hasInk() && subj(sk) !== 'yw' ? pad.toDataURL() : null;
   const body = {
     mode, question,
     problem: {
-      grade: sk.grade, skillName: sk.name, tip: sk.tip,
-      text: C.plainText(p.q) + (p.fig ? '（题目有配图）' : '') + (p.answer.some((a, k) => !p.q.includes(`{${k}}`)) ? ' 要填：' + p.answer.map((a) => (a.label || '') + (a.unit ? `（${a.unit}）` : '')).join('、') : ''),
+      subject: subj(sk), grade: sk.grade, skillName: sk.name, tip: sk.tip,
+      text: (p.say ? `（听写，读给孩子听的是：${p.say}）` : '') + C.plainText(p.q) + (p.fig ? '（题目有配图）' : '') + (p.answer.some((a, k) => !p.q.includes(`{${k}}`)) ? ' 要填：' + p.answer.map((a) => (a.label || '') + (a.unit ? `（${a.unit}）` : '')).join('、') : ''),
       answerText: p.answer.map(C.answerText).join('；'),
       steps: p.steps.map((s) => (typeof s === 'string' ? C.plainText(s) : s.pre)),
     },
@@ -919,8 +986,8 @@ function showWrongBook() {
 function chooseTest() {
   const g = P.grade, t = P.term;
   const term = skillsOf(g, t), practiced = term.filter((s) => P.skills[s.id]?.n);
-  const before = SK.filter((s) => (s.grade < g || (s.grade === g && s.term < t)) && P.skills[s.id]?.n);
-  modal(`<div class="mbig">${mascot('normal', 90)}</div><h2>📝 综合测验</h2><p>从题型里随机出题，做完统一看对错，错题自动进错题本。全对再奖 5 颗星！</p>
+  const before = subjSK().filter((s) => (s.grade < g || (s.grade === g && s.term < t)) && P.skills[s.id]?.n);
+  modal(`<div class="mbig">${mascot('normal', 90)}</div><h2>📝 ${SUBJECTS[curSubject()].name}综合测验</h2><p>从题型里随机出题，做完统一看对错，错题自动进错题本。全对再奖 5 颗星！</p>
     <div class="row"><div class="seg" id="tscope"><button data-s="practiced" class="on">练过的（${practiced.length} 个题型）</button><button data-s="term">本册全部（${term.length}）</button>${before.length ? `<button data-s="review">以前学的（${before.length}）</button>` : ''}</div></div>
     <div class="row"><div class="seg" id="tcount"><button data-n="10" class="on">10 题</button><button data-n="20">20 题</button><button data-n="30">30 题</button></div></div>
     <div class="row"><button class="btn pri" id="tgo">开始</button><button class="btn ghost" id="tx">取消</button></div>`,
@@ -983,11 +1050,11 @@ async function showParent() {
       <div id="aitestout" class="muted" style="font-size:16px;white-space:pre-wrap"></div>
     </div>
     <div class="panel"><h3>练过的题型（${practiced.length}）</h3>
-      <table><tr><th>题型</th><th>年级</th><th>状态</th><th>做题</th><th>近 20 题正确率</th><th>平均用时</th><th>最近</th></tr>
-      ${practiced.map((s) => { const x = P.skills[s.id]; return `<tr><td>${esc(s.name)}</td><td>${C.termName(s.grade, s.term)}</td><td>${statusLabel[C.status(P, s)] || ''}</td><td>${x.n}</td><td>${Math.round(C.accuracy(x) * 100)}%</td><td>${avg(s)}</td><td>${new Date(x.last).toLocaleDateString('zh-CN')}</td></tr>`; }).join('')}
+      <table><tr><th>题型</th><th>科目</th><th>年级</th><th>状态</th><th>做题</th><th>近 20 题正确率</th><th>平均用时</th><th>最近</th></tr>
+      ${practiced.map((s) => { const x = P.skills[s.id]; return `<tr><td>${esc(s.name)}</td><td>${SUBJECTS[subj(s)].name}</td><td>${C.termName(s.grade, s.term)}</td><td>${statusLabel[C.status(P, s)] || ''}</td><td>${x.n}</td><td>${Math.round(C.accuracy(x) * 100)}%</td><td>${avg(s)}</td><td>${new Date(x.last).toLocaleDateString('zh-CN')}</td></tr>`; }).join('')}
       </table>${practiced.length ? '' : '<p class="muted">还没开始练</p>'}
     </div>
-    <div class="panel"><h3>题库</h3><p class="muted">已载入 ${GRADES_LOADED.map((g) => C.GRADE_CN[g] + '年级').join('、') || '无'}，共 ${SK.length} 个题型。</p>
+    <div class="panel"><h3>题库</h3><p class="muted">数学：${GRADES_LOADED.map((g) => C.GRADE_CN[g] + '年级').join('、') || '无'}，共 ${subjSK('math').length} 个题型；语文：${subjSK('yw').length} 个题型（${[...new Set(subjSK('yw').map((s) => s.unit))].sort((a, b) => YW_UNITS.indexOf(a) - YW_UNITS.indexOf(b)).join('、') || '还没有'}）。</p>
       <p class="muted" style="font-size:15px">进度存在这台 iPad 上。隔一阵导出一份备份；换 iPad 或清了 Safari 数据后用「导入备份」恢复。</p>
       <button class="btn" id="export">导出备份</button> <button class="btn" id="import">导入备份</button><input type="file" id="importFile" accept=".json,application/json" hidden> <button class="btn ghost" id="reset" style="color:var(--bad)">清空所有进度</button></div>
   </div>`;
@@ -1012,7 +1079,7 @@ async function showParent() {
     const c = formAIC(), keep = AIC;
     if (c.apiKey) AIC = c; // 用表单里的值试，不用先保存
     try {
-      const text = await aiRequest({ mode: 'chat', question: '老师好，用一句话鼓励我好好学数学。', problem: { grade: P.grade, skillName: '测试' } });
+      const text = await aiRequest({ mode: 'chat', question: '老师好，用一句话鼓励我好好学习。', problem: { grade: P.grade, skillName: '测试' } });
       out.textContent = text + `\n（${((Date.now() - t0) / 1000).toFixed(1)} 秒）`;
     } catch (e) { out.textContent = '没连上：' + e.message + (/Failed to fetch|Load failed|NetworkError/.test(e.message) ? '\n（这个接口可能不允许浏览器直连，或者网络不通）' : ''); }
     finally { AIC = keep; }
@@ -1032,7 +1099,7 @@ async function showParent() {
 }
 
 // ---------------- 启动 ----------------
-window.__mc = { get S() { return S; }, get SK() { return SK; }, get P() { return P; }, get CH() { return CH; }, startDrill, showHome, showMe, showChallenge, runChallenge, endChallenge }; // 自动化测试用
+window.__mc = { get S() { return S; }, get SK() { return SK; }, get P() { return P; }, get CH() { return CH; }, get HP() { return HP; }, get homeView() { return homeView; }, startDrill, showHome, showMe, showChallenge, runChallenge, endChallenge }; // 自动化测试用
 
 (async () => {
   try { navigator.storage?.persist?.(); } catch {}

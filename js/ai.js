@@ -11,10 +11,23 @@ export const SYSTEM = `你是一位耐心、会鼓励人的北京小学数学老
 - 讲方法时用孩子这个年级学过的方法（低年级用凑十、画图、数数；不要用方程，除非题目本来就是方程）。
 - 最后用一句话鼓励，或者给一个马上能试的小练习。`;
 
+export const SYSTEM_YW = `你是一位耐心、会鼓励人的北京小学语文老师（统编版教材），正在 iPad 上一对一辅导一个小学生。
+说话对象是孩子：用简单、亲切的短句，像当面讲题；不要用 Markdown 标题和表格。
+回答控制在 250 字以内，分 2~5 小段或几个短行。
+规则：
+- 孩子还没答对时（提示模式），只引导方法、问一个关键问题，不要直接说出答案。
+- 讲方法：字词题讲偏旁表意、字形结构、读音规律；词语题讲意思和用法；句子题讲句子成分和句式；阅读题先教方法（到文中找依据句），再指出依据。
+- 读音、字形、诗句必须准确；拿不准就直说，不要编。
+- 用孩子这个年级学过的说法，多举生活里的例子。
+- 最后用一句话鼓励，或者给一个马上能试的小练习。`;
+
+/** 按科目选系统提示词 */
+export const systemFor = (body) => (body?.problem?.subject === 'yw' ? SYSTEM_YW : SYSTEM);
+
 export function buildPrompt(body) {
   const { mode, problem = {}, kid = {}, question, history = [] } = body;
   const lines = [];
-  lines.push(`【年级】${problem.grade || '?'} 年级 ·【题型】${problem.skillName || ''}（${problem.tip || ''}）`);
+  lines.push(`【科目】${problem.subject === 'yw' ? '语文' : '数学'} ·【年级】${problem.grade || '?'} 年级 ·【题型】${problem.skillName || ''}（${problem.tip || ''}）`);
   lines.push(`【题目】${problem.text || ''}`);
   if (problem.answerText) lines.push(`【标准答案】${problem.answerText}`);
   if (problem.steps?.length) lines.push(`【参考讲解】\n${problem.steps.join('\n')}`);
@@ -23,7 +36,7 @@ export function buildPrompt(body) {
   if (history.length) lines.push('【刚才的对话】\n' + history.map((h) => `${h.role === 'kid' ? '孩子' : '老师'}：${h.text}`).join('\n'));
   const task = {
     hint: '孩子说「我不会」。请给提示：引导他想到关键的第一步，不要说出答案。',
-    diagnose: '孩子答错了。附图是他的草稿（如果有）。请看草稿找出他具体错在哪一步、为什么，然后用最简单的方法讲一遍正确思路。',
+    diagnose: problem.subject === 'yw' ? '孩子答错了。请根据他的答案判断他是哪里没掌握（读音、字形、词义、方法），然后用这类题的方法讲一遍。' : '孩子答错了。附图是他的草稿（如果有）。请看草稿找出他具体错在哪一步、为什么，然后用最简单的方法讲一遍正确思路。',
     review: '孩子答对了，附图是他的解题过程。请检查过程是否规范完整（列式、单位、答句），指出可以改进的地方；过程没问题就具体地表扬他。',
     explain: '孩子看了讲解还是不太明白。请换一种更直观的讲法（举生活例子或画图的说法）把这道题讲清楚。',
     chat: `孩子问：「${question || ''}」。请回答他。`,
@@ -61,7 +74,7 @@ export async function callDirect(cfg, body) {
     const r = await fetch(base + '/v1/messages', {
       method: 'POST', signal,
       headers: { 'Content-Type': 'application/json', 'x-api-key': cfg.apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-      body: JSON.stringify({ model: cfg.model, max_tokens: 16000, ...(official ? { output_config: { effort: 'low' } } : {}), system: SYSTEM, messages: [{ role: 'user', content }] }),
+      body: JSON.stringify({ model: cfg.model, max_tokens: 16000, ...(official ? { output_config: { effort: 'low' } } : {}), system: systemFor(body), messages: [{ role: 'user', content }] }),
     });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(`接口返回 ${r.status}：${j.error?.message || JSON.stringify(j).slice(0, 200)}`);
@@ -72,7 +85,7 @@ export async function callDirect(cfg, body) {
   const r = await fetch(base + '/chat/completions', {
     method: 'POST', signal,
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.apiKey}` },
-    body: JSON.stringify({ model: cfg.model, messages: [{ role: 'system', content: SYSTEM }, { role: 'user', content: userContent }] }),
+    body: JSON.stringify({ model: cfg.model, messages: [{ role: 'system', content: systemFor(body) }, { role: 'user', content: userContent }] }),
   });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(`接口返回 ${r.status}：${j.error?.message || JSON.stringify(j).slice(0, 200)}`);
