@@ -288,10 +288,13 @@ function nextProblem() {
 }
 
 /** 题干里的答题空（含标签、单位）和题干外的答题空 */
-function layoutQ(p, cell) {
-  const inline = new Set([...String(p.q).replace(/<svg[\s\S]*?<\/svg>/g, '').matchAll(/\{(\d+)\}/g)].map((m) => +m[1]));
+function layoutQ(p, cell, slotChoice = false) {
+  // slotChoice（语文）：题干里的选择空只留「（　）」，选项放到题干下面，选了填进括号
+  const slot = (k) => slotChoice && p.answer[k]?.kind === 'choice';
+  const inline = new Set([...String(p.q).replace(/<svg[\s\S]*?<\/svg>/g, '').matchAll(/\{(\d+)\}/g)].map((m) => +m[1]).filter((k) => !slot(k)));
   const q = C.renderMarkup(p.q, (k) => {
     const a = p.answer[k]; if (!a) return '';
+    if (slot(k)) return `<span class="chbr">（<span class="chslot" data-k="${k}"></span>）</span>`;
     const pos = p.q.indexOf(`{${k}}`), before = p.q.slice(Math.max(0, pos - 6), pos), after = p.q.slice(pos + 3, pos + 9);
     const lab = a.label && !before.includes(a.label) ? `<span class="lbl">${esc(a.label)}</span>` : '';
     const unit = a.unit && !after.trimStart().startsWith(a.unit) ? `<span class="unitx">${esc(a.unit)}</span>` : '';
@@ -393,7 +396,7 @@ function renderPractice() {
   const dots = S.target === 'test' ? '' : S.target === 'free' ? `<span class="chip fire sm" id="streakChip">🔥 连对 ${st.streak}</span>` : `<div class="dots ${need > 6 ? 'small' : ''}" title="连对 ${st.streak}/${need}">${Array.from({ length: need }, (_, i) => `<i class="${i < st.streak ? 'on' : ''}"></i>`).join('')}</div>`;
   const isYW = subj(sk) === 'yw';
   const rd = isYW ? splitPassage(sk, p) : null;
-  const { q, after } = layoutQ(rd ? { ...p, q: rd.ask } : p, (a, k) => blankHTML(a, k, kbd));
+  const { q, after } = layoutQ(rd ? { ...p, q: rd.ask } : p, (a, k) => blankHTML(a, k, kbd), isYW);
   const needKeys = p.answer.some((a) => ['num', 'frac', 'ratio'].includes(a.kind));
   const tools = `<div class="qtools"><button class="iconbtn" id="readQ" title="读题">🔊</button>${S.mode !== 'test' ? '<button class="iconbtn" id="exBtn" title="看例题">📖</button>' : ''}</div>`;
 
@@ -449,7 +452,7 @@ function blankHTML(a, k, kbd) {
   switch (a.kind) {
     case 'frac': return `<span class="mixin">${a.mixed ? inp('w') : ''}<span class="fracin">${inp('n')}<span class="ln"></span>${inp('d')}</span></span>`;
     case 'ratio': return `${inp('a')}<b>:</b>${inp('b')}`;
-    case 'choice': { const long = a.options.some((o) => String(o).length > 3); return `<span class="choice ${long && a.options.length > 2 ? 'col' : ''}" data-k="${k}">${a.options.map((o) => `<button class="${long ? 'long' : ''}" data-v="${esc(o)}">${C.renderMarkup(String(o))}</button>`).join('')}</span>`; }
+    case 'choice': { const long = a.options.some((o) => C.stripMarks(o).length > 3); return `<span class="choice ${long && a.options.length > 2 ? 'col' : ''}" data-k="${k}">${a.options.map((o) => `<button class="${long ? 'long' : ''}" data-v="${esc(o)}">${C.renderMarkup(String(o))}</button>`).join('')}</span>`; }
     case 'text': return `<input class="blank" data-k="${k}" data-sub="v" style="width:6em" autocomplete="off">`;
     case 'hanzi': return `<span class="hzb" data-k="${k}">${[...a.value].map((_, i) => `<i data-i="${i}"></i>`).join('')}</span>`;
     case 'order': return YW.orderHTML(a, k);
@@ -471,6 +474,7 @@ function bindInputs() {
   $$('#left .choice button').forEach((b) => (b.onclick = () => {
     if (S.answered) return;
     const grp = b.parentElement; $$('button', grp).forEach((x) => x.classList.remove('sel', 'wrong', 'right')); b.classList.add('sel');
+    const sl = $(`#left .chslot[data-k="${grp.dataset.k}"]`); if (sl) { sl.innerHTML = C.renderMarkup(b.dataset.v); sl.classList.remove('r-ok', 'r-bad'); }
     const groups = $$('#left .choice');
     if (!inputs.length && groups.every((g) => $('button.sel', g)) && S.problem.answer.every((a) => a.kind === 'choice')) setTimeout(submit, 150);
   }));
@@ -504,8 +508,8 @@ function givenText(vals) {
     if (a.kind === 'frac') return v.w ? `${v.w}又${v.n}/${v.d}` : `${v.n || '?'}/${v.d || '?'}`;
     if (a.kind === 'ratio') return `${v.a || '?'}:${v.b || '?'}`;
     if (a.kind === 'hanzi') return (a.label ? a.label + '：' : '') + (v.text || '（没写完）') + (v.fails ? '（看了提示）' : '');
-    if (a.kind === 'order') return (a.label ? a.label + '：' : '') + (v.length ? v.join(a.sep ?? '') : '（没排）');
-    return (a.label ? a.label + '：' : '') + (v ?? '（没选）');
+    if (a.kind === 'order') return (a.label ? a.label + '：' : '') + (v.length ? v.map(C.stripMarks).join(a.sep ?? '') : '（没排）');
+    return (a.label ? a.label + '：' : '') + (v == null ? '（没选）' : C.stripMarks(v));
   }).join('；');
 }
 function markBlanks(res) {
@@ -513,6 +517,7 @@ function markBlanks(res) {
     if (a.kind === 'choice') {
       const sel = $(`#left .choice[data-k="${k}"] button.sel`);
       if (sel) sel.classList.add(res[k].ok ? 'right' : 'wrong');
+      const sl = $(`#left .chslot[data-k="${k}"]`); if (sl) { sl.classList.remove('r-ok', 'r-bad'); sl.classList.add(res[k].ok ? 'r-ok' : 'r-bad'); }
     } else if (a.kind === 'hanzi' || a.kind === 'order') {
       const el = $(`#left .${a.kind === 'hanzi' ? 'hzb' : 'ord'}[data-k="${k}"]`); if (el) { el.classList.remove('r-ok', 'r-bad'); el.classList.add(res[k].ok ? 'r-ok' : 'r-bad'); }
     } else $$(`#left input.blank[data-k="${k}"]`).forEach((e) => { e.classList.remove('right', 'wrong'); e.classList.add(res[k].ok ? 'right' : 'wrong'); });
@@ -636,7 +641,7 @@ function reveal(res) {
   $$('#feedback .result.try').forEach((x) => x.remove());
   const fb = $('#feedback');
   fb.insertAdjacentHTML('beforeend', resultBox('bad', 'think', `正确答案：${p.answer.map((a) => `<span class="ans">${a.label ? esc(a.label) + ' ' : ''}${C.answerHTML(a)}</span>`).join('　')}`, `<div class="muted" style="font-size:16px">看懂下面每一步，下一道一定行！</div><ol class="steps">${stepsHTML(p.steps)}</ol>`));
-  p.answer.forEach((a, k) => { if (a.kind === 'choice') $$(`#left .choice[data-k="${k}"] button`).forEach((b) => { if (b.dataset.v === a.value) b.classList.add('answer'); }); });
+  p.answer.forEach((a, k) => { if (a.kind === 'choice') { $$(`#left .choice[data-k="${k}"] button`).forEach((b) => { if (b.dataset.v === a.value) b.classList.add('answer'); }); const sl = $(`#left .chslot[data-k="${k}"]`); if (sl) { sl.innerHTML = C.renderMarkup(a.value); sl.classList.remove('r-bad'); sl.classList.add('r-ok'); } } });
   $$('#left .ord').forEach((o) => o.classList.add('locked'));
   if (HP) HP.reveal();
   renderOps('next');

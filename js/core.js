@@ -32,16 +32,18 @@ export function plainText(text) {
     .replace(/\{(\d+)\}/g, '（ ）');
 }
 
+/** 去掉注音、加点标记，只留字（答案、孩子的选择给 AI 和错题本看） */
+export const stripMarks = (v) => String(v ?? '').replace(RUBY, '$1').replace(/\*\*(.+?)\*\*/g, '$1');
 export function answerText(a) {
   const pre = a.label ? a.label + '：' : '';
   switch (a.kind) {
     case 'num': return pre + fmt(a.value) + (a.unit || '');
     case 'frac': { const [n, d] = a.value; if (a.mixed && n > d) return pre + `${Math.trunc(n / d)}又${n % d}/${d}`; return pre + `${n}/${d}`; }
     case 'ratio': return pre + a.value.join(':');
-    case 'choice': return pre + a.value;
+    case 'choice': return pre + stripMarks(a.value);
     case 'text': return pre + (Array.isArray(a.value) ? a.value[0] : a.value);
     case 'hanzi': return pre + a.value;
-    case 'order': return pre + a.value.join(a.sep ?? '');
+    case 'order': return pre + a.value.map(stripMarks).join(a.sep ?? '');
   }
   return '';
 }
@@ -50,6 +52,7 @@ export function answerHTML(a) {
   switch (a.kind) {
     case 'frac': { const [n, d] = a.value; if (a.mixed && n > d) return `<span class="mixed">${Math.trunc(n / d)}${fracHTML(n % d, d)}</span>`; return fracHTML(n, d); }
     case 'num': return escHTML(fmt(a.value)) + (a.unit ? `<small>${escHTML(a.unit)}</small>` : '');
+    case 'choice': return renderMarkup(String(a.value));
     default: return escHTML(answerText({ ...a, label: '' }));
   }
 }

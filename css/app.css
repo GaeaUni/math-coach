@@ -493,3 +493,10 @@ body > .combo { position: fixed; }
   .qcard.reading > .passage { padding-right: 6px; }
   .qcard.reading > .askcol { border-top: 0; margin-top: 0; padding-top: 4px; border-left: 2px dashed var(--line); padding-left: 26px; }
 }
+
+/* 语文选词填空：题干里的括号空，选了填进去 */
+.chbr { white-space: nowrap; }
+.chslot { display: inline-block; min-width: 2.2em; padding: 0 .15em; text-align: center; color: var(--pri); font-weight: 700; border-bottom: 3px dashed #c9d3ee; }
+.chslot:empty::before { content: '\3000\3000'; }
+.chslot.r-ok { color: #1a9b6c; border-bottom: 3px solid #22b07d; }
+.chslot.r-bad { color: #e4572e; border-bottom: 3px solid #e4572e; }
