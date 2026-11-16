@@ -1,5 +1,6 @@
 // 四年级题库（上册 term:1、下册 term:2）。题型按人教版单元顺序排列。
 import { fig, fmt, fix, frac, readInt, readNum, vAdd, vSub, vMul, vDiv, round, decimals, gcd } from '../js/lib.js';
+import * as PZ from './puzzle.js';
 
 // ===== 共用工具 =====
 const uniq = (a) => [...new Set(a)];
@@ -3248,4 +3249,18 @@ const LOWER = [
   },
 ];
 
-export default [...UPPER, ...LOWER];
+// 上册拓展：简便运算（交换律、结合律）和补全算式，出题器在 puzzle.js
+const UPPER_EXTRA = [
+  { id: 'g4a-puzzle-vmul', grade: 4, term: 1, unit: '三位数乘两位数', name: '竖式谜：三位数乘两位数', tip: '竖式每一行都是一个算式：第一层 = 上面的数 × 乘数个位，第二层 = 上面的数 × 乘数十位；先推只缺一个数的那一行', level: 3, gen: PZ.genVMul2 },
+  { id: 'g4a-law-name', grade: 4, term: 1, unit: '拓展：简便运算', name: '认一认运算律', tip: '交换律：数的位置换了；结合律：数的位置不变，括号（先算哪两个）变了', level: 1, gen: PZ.genLawName },
+  { id: 'g4a-law-fill', grade: 4, term: 1, unit: '拓展：简便运算', name: '按运算律填数', tip: '等号两边用的数一样多、一样大，只是位置或先算的顺序变了', level: 1, gen: PZ.genLawFill },
+  { id: 'g4a-simp-add', grade: 4, term: 1, unit: '拓展：简便运算', name: '加法凑整（交换律、结合律）', tip: '找能凑成整百、整千的两个数，用交换律换到一起、用结合律加上括号先算', level: 1, gen: (r) => PZ.genAddPair(r, { big: true }) },
+  { id: 'g4a-simp-add4', grade: 4, term: 1, unit: '拓展：简便运算', name: '四个数两两凑整', tip: '个位相加是 10 的两个数是一对好朋友，两对分别加起来', level: 2, gen: PZ.genAddPair4 },
+  { id: 'g4a-simp-mul', grade: 4, term: 1, unit: '拓展：简便运算', name: '乘法凑整（交换律、结合律）', tip: '记住好朋友：25 × 4 = 100，125 × 8 = 1000，5 × 2 = 10，先把它们乘起来', level: 1, gen: PZ.genMulPair },
+  { id: 'g4a-simp-sub', grade: 4, term: 1, unit: '拓展：简便运算', name: '连减和加减混合凑整', tip: 'a - b - c = a - (b + c)；数可以带着前面的符号搬家', level: 2, gen: PZ.genSubPair },
+  { id: 'g4a-simp-calc', grade: 4, term: 1, unit: '拓展：简便运算', name: '简便计算（只写得数）', tip: '先观察哪两个数能凑整，再选交换律、结合律，过程在草稿纸上写', level: 2, gen: PZ.genLawCalc },
+  { id: 'g4a-puzzle-vaddsub', grade: 4, term: 1, unit: '拓展：算式谜', name: '竖式谜：加减法', tip: '一列一列推，每推出一位都要想：有没有进位、有没有被借走 1', level: 2, gen: (r) => PZ.genVAddSub(r, { sub: r.bool(), hide: r.int(3, 4) }) },
+  { id: 'g4a-fill-op', grade: 4, term: 1, unit: '拓展：算式谜', name: '填运算符号（四个数）', tip: '先估：结果大，多半有 ×；结果小，可能有 - 或 ÷。填好后按「先乘除，后加减」算一遍', level: 3, gen: (r) => PZ.genFillOp(r, { n: 4, lo: 1, hi: 9, max: 200 }) },
+  { id: 'g4a-paren', grade: 4, term: 1, unit: '拓展：算式谜', name: '添括号使等式成立', tip: '括号里的先算：想一想先算哪两个数，才能得到右边的数', level: 2, gen: PZ.genParen },
+];
+export default [...UPPER, ...UPPER_EXTRA, ...LOWER];

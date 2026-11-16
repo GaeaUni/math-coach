@@ -9,6 +9,19 @@ const rubyHTML = (hz, py) => { const cs = [...hz], ps = py.trim().split(/\s+/); 
 const RUBY = /\[\[([^|\]]+)\|([^\]]+)\]\]/g;
 
 /** 题干 / 讲解标记 → HTML。blank(k) 返回第 k 个答题空的 HTML */
+/** 竖式标记 ⟪格,格/-/格,格⟫：'/' 分行，',' 分格，单独的 '-' 是横线（画在下一行上面） */
+const VGRID = /\n?⟪([^⟫]*)⟫\n?/g;
+function vgridHTML(body) {
+  let line = false, html = '';
+  for (const row of body.split('/')) {
+    if (row === '-') { line = true; continue; }
+    html += `<tr${line ? ' class="top"' : ''}>${row.split(',').map((c) => `<td${/^[+\-×÷]$/.test(c) ? ' class="sg"' : ''}>${c}</td>`).join('')}</tr>`;
+    line = false;
+  }
+  return `<table class="vgrid">${html}</table>`;
+}
+const vgridText = (body) => '\n' + body.split('/').map((row) => (row === '-' ? '------' : row.split(',').map((c) => c || ' ').join(' '))).join('\n') + '\n';
+
 export function renderMarkup(text, blank) {
   const svgs = [];
   let s = String(text).replace(/<svg[\s\S]*?<\/svg>/g, (m) => { svgs.push(m); return `\u0000${svgs.length - 1}\u0000`; });
@@ -16,6 +29,7 @@ export function renderMarkup(text, blank) {
     .replace(/\{\{\s*(-?\d+)\s+(\d+)\/(\d+)\s*\}\}/g, (_, w, n, d) => `<span class="mixed">${w}${fracHTML(n, d)}</span>`)
     .replace(/\{\{\s*(-?\d+)\/(\d+)\s*\}\}/g, (_, n, d) => fracHTML(n, d))
     .replace(RUBY, (_, hz, py) => rubyHTML(hz, py))
+    .replace(VGRID, (_, b) => vgridHTML(b))
     .replace(/\*\*(.+?)\*\*/g, (_, x) => { const t = x.replace(/<rt>.*?<\/rt>/g, '').replace(/<[^>]+>/g, ''), n = (t.match(/\p{Script=Han}/gu) || []).length; return `<b class="${!n ? 'em-no' : n > 4 ? 'em-line' : 'em-dot'}">${x}</b>`; })
     .replace(/\n/g, '<br>');
   if (blank) s = s.replace(/\{(\d+)\}/g, (_, k) => blank(+k));
@@ -24,7 +38,7 @@ export function renderMarkup(text, blank) {
 
 /** 纯文字（给 AI 看）：分数写成 a/b，答题空写成（ ） */
 export function plainText(text) {
-  return String(text).replace(/<svg[\s\S]*?<\/svg>/g, '[图]')
+  return String(text).replace(/<svg[\s\S]*?<\/svg>/g, '[图]').replace(VGRID, (_, b) => vgridText(b))
     .replace(/\{\{\s*(-?\d+)\s+(\d+)\/(\d+)\s*\}\}/g, '$1又$2/$3')
     .replace(/\{\{\s*(-?\d+)\/(\d+)\s*\}\}/g, '$1/$2')
     .replace(RUBY, '$1（$2）')

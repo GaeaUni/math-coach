@@ -396,7 +396,7 @@ function renderPractice() {
   const dots = S.target === 'test' ? '' : S.target === 'free' ? `<span class="chip fire sm" id="streakChip">🔥 连对 ${st.streak}</span>` : `<div class="dots ${need > 6 ? 'small' : ''}" title="连对 ${st.streak}/${need}">${Array.from({ length: need }, (_, i) => `<i class="${i < st.streak ? 'on' : ''}"></i>`).join('')}</div>`;
   const isYW = subj(sk) === 'yw';
   const rd = isYW ? splitPassage(sk, p) : null;
-  const { q, after } = layoutQ(rd ? { ...p, q: rd.ask } : p, (a, k) => blankHTML(a, k, kbd), isYW);
+  const { q, after } = layoutQ(rd ? { ...p, q: rd.ask } : p, (a, k) => blankHTML(a, k, kbd), isYW || !!p.slots);
   const needKeys = p.answer.some((a) => ['num', 'frac', 'ratio'].includes(a.kind));
   const tools = `<div class="qtools"><button class="iconbtn" id="readQ" title="读题">🔊</button>${S.mode !== 'test' ? '<button class="iconbtn" id="exBtn" title="看例题">📖</button>' : ''}</div>`;
 

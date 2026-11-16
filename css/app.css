@@ -500,3 +500,15 @@ body > .combo { position: fixed; }
 .chslot:empty::before { content: '\3000\3000'; }
 .chslot.r-ok { color: #1a9b6c; border-bottom: 3px solid #22b07d; }
 .chslot.r-bad { color: #e4572e; border-bottom: 3px solid #e4572e; }
+
+/* 数学竖式填空（数字谜）：一格一个数字（覆盖全局 table 样式） */
+.vgrid { width: auto; border-collapse: collapse; margin: .2em 0 .3em .8em; font-size: 1em; font-variant-numeric: tabular-nums; line-height: 1.25; }
+.vgrid td { width: 1.15em; height: 1.4em; padding: 0 .08em; text-align: center; vertical-align: middle; border: 0; }
+.vgrid td.sg { color: var(--muted, #6b7280); }
+.vgrid tr.top td { border-top: 3px solid currentColor; }
+.vgrid input.blank { width: 1.1em !important; min-width: 0; padding: 0; text-align: center; }
+.vgrid .filled { min-width: 0; padding: 0 .1em; margin: 0; }
+.wrongitem .vgrid, .modal .vgrid { margin-left: .3em; }
+/* 数学的符号空：括号窄一点，算式不折行 */
+.qcard:not(.yw) .chslot { min-width: 1.1em; padding: 0; }
+.qcard:not(.yw) .chslot:empty::before { content: '\3000'; }

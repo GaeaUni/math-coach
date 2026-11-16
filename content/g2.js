@@ -1,5 +1,6 @@
 // 二年级题库：上册 term 1、下册 term 2。单元名用人教版叫法，题型覆盖人教版 / 北京版 / 北师大版二年级常考内容。
 import { fig, fmt, fix, vAdd, vSub, vDiv, readInt } from '../js/lib.js';
+import * as PZ from './puzzle.js';
 
 // ================= 局部工具 =================
 const num = (value, o = {}) => ({ kind: 'num', value: fix(value), ...o });
@@ -176,7 +177,7 @@ function raysFig(dirs, { arc = null, L = 150 } = {}) {
   return fig.raw(Math.round(maxX - minX), Math.round(maxY - minY), s);
 }
 
-export default [
+const SKILLS = [
   // ======================= 二年级上册 =======================
   // ---------- 长度单位 ----------
   {
@@ -1603,4 +1604,11 @@ export default [
     },
   },
 ];
+
+// 补全算式（数字谜、填运算符号），出题器在 puzzle.js
+const PUZZLE = [
+  { id: 'g2a-puzzle-addsub', grade: 2, term: 1, unit: '100以内的加法和减法（二）', name: '算式谜：两位数加减法', tip: '从个位推起：缺加数就用「和 - 另一个加数」，缺减数就用「被减数 - 差」；别忘了进位和退位', level: 2, gen: PZ.genHAddSub },
+  { id: 'g2b-fill-op', grade: 2, term: 2, unit: '混合运算', name: '填运算符号', tip: '先估一估：结果比这几个数大很多，多半有 ×；填好后按「先乘除，后加减」算一遍', level: 2, gen: (r) => PZ.genFillOp(r, { n: 3, lo: 1, hi: 9, max: 81 }) },
+];
+export default [...SKILLS, ...PUZZLE];
 

@@ -1,5 +1,6 @@
 // 三年级题库：上册 term 1、下册 term 2。单元名用人教版叫法，题型覆盖人教版 / 北京版 / 北师大版三年级常考内容。
 import { fig, fmt, fix, frac, decimals, vAdd, vSub, vMul, vDiv, readNum, readInt } from '../js/lib.js';
+import * as PZ from './puzzle.js';
 
 // ================= 局部工具 =================
 const num = (value, o = {}) => ({ kind: 'num', value: fix(value), ...o });
@@ -2591,4 +2592,11 @@ const TERM2_C = [
   },
 ];
 
-export default [...TERM1_A, ...TERM1_B, ...TERM1_C, ...TERM2_A, ...TERM2_B, ...TERM2_C];
+// 简便运算（凑整）和补全算式（竖式数字谜），出题器在 puzzle.js；同名单元会归到原单元里
+const PUZZLE = [
+  { id: 'g3a-simp-add', grade: 3, term: 1, unit: '万以内的加法和减法（二）', name: '连加凑整巧算', tip: '先找能凑成整百的两个数（个位相加是 10），换到一起先加', level: 1, gen: (r) => PZ.genAddPair(r) },
+  { id: 'g3a-puzzle-vadd', grade: 3, term: 1, unit: '万以内的加法和减法（二）', name: '竖式谜：加法', tip: '从个位一列一列推：这一列缺的数 = 得数这一位 - 另一个数（得数小就先借 10），再看有没有进位', level: 2, gen: (r) => PZ.genVAddSub(r, { hide: r.int(2, 3) }) },
+  { id: 'g3a-puzzle-vsub', grade: 3, term: 1, unit: '万以内的加法和减法（二）', name: '竖式谜：减法', tip: '从个位一列一列推：缺被减数就用「差 + 减数」，缺减数就用「被减数 - 差」；注意这一位有没有被借走 1', level: 2, gen: (r) => PZ.genVAddSub(r, { sub: true, hide: r.int(2, 3) }) },
+  { id: 'g3a-puzzle-vmul', grade: 3, term: 1, unit: '多位数乘一位数', name: '竖式谜：乘一位数', tip: '从个位推起：几乘这个数，积的个位才对？推出来以后，记着把进位带到下一位', level: 2, gen: PZ.genVMul1 },
+];
+export default [...TERM1_A, ...TERM1_B, ...TERM1_C, ...PUZZLE, ...TERM2_A, ...TERM2_B, ...TERM2_C];
