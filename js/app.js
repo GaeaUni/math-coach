@@ -5,6 +5,7 @@ import * as R from './rewards.js';
 import { mascot, speak, stopSpeak, ring, unitStyle } from './ui.js';
 import { callDirect, PRESETS } from './ai.js';
 import * as YW from './yw.js';
+import * as CL from './cloud.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -43,9 +44,10 @@ async function loadProgress() {
   let local = null, remote = null;
   try { local = JSON.parse(localStorage.getItem('mc:' + PROFILE)); } catch {}
   if (HAS_SERVER) try { remote = await (await fetch('/api/progress?p=' + PROFILE)).json(); } catch {}
-  const got = [local, remote].filter((x) => x && typeof x === 'object' && x.skills).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))[0] || {};
+  const [got = {}, ...rest] = [local, remote].filter((x) => x && typeof x === 'object' && x.skills).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
   const d = C.newProgress();
   P = { ...d, ...got, settings: { ...d.settings, ...(got.settings || {}) } };
+  for (const x of rest) C.mergeInto(P, x); // Mac 上的和这台设备上的合起来
   for (const k of ['skills', 'wrong', 'days']) P[k] ||= d[k];
   R.stats(P);
 }
@@ -72,11 +74,65 @@ async function aiStatus() {
 let saveTimer;
 function save() {
   P.updatedAt = Date.now();
-  try { localStorage.setItem('mc:' + PROFILE, JSON.stringify(P)); } catch {}
+  saveLocal();
+  cloudLater();
   if (!HAS_SERVER) return;
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => fetch('/api/progress?p=' + PROFILE, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(P) }).catch(() => {}), 600);
 }
+function saveLocal() { try { localStorage.setItem('mc:' + PROFILE, JSON.stringify(P)); } catch {} }
+
+// ---------------- 云端同步（家长 GitHub 私有仓库，见 cloud.js） ----------------
+// 做题时攒 20 秒传一次，切到后台时马上传；打开 App、从后台回来时先拉云端的合进来（别的设备做的题也会出现）。
+const CLOUD_FILE = `progress-${PROFILE}.json`;
+const CL_ = { sha: null, known: false, busy: null, again: false, timer: 0, at: 0, err: '', pulledAt: 0 };
+function cloudLater(ms = 20000) {
+  if (!CL.cfg()) return;
+  clearTimeout(CL_.timer); CL_.timer = setTimeout(() => cloudSync(), ms);
+}
+/** 和云端对一次：没读过就先读、合并，再把合并后的写回去；别的设备抢先写了就重读重合 */
+function cloudSync() {
+  const c = CL.cfg();
+  if (!c) return Promise.resolve();
+  clearTimeout(CL_.timer); CL_.timer = 0;
+  if (CL_.busy) { CL_.again = true; return CL_.busy; }
+  CL_.busy = (async () => {
+    try {
+      for (let i = 0; ; i++) {
+        if (i >= 4) throw new Error('几台设备同时在写，这次没同步上，稍后会再试');
+        if (!CL_.known) {
+          const { data, sha } = await CL.pull(c, CLOUD_FILE);
+          CL_.sha = sha; CL_.known = true; CL_.pulledAt = Date.now();
+          if (data && C.mergeInto(P, data)) { R.stats(P); saveLocal(); cloudMerged(); }
+          if (data && JSON.stringify(data) === JSON.stringify(P)) break; // 云端已经是最新的
+        }
+        const res = await CL.push(c, CLOUD_FILE, P, CL_.sha);
+        if (res.conflict) { CL_.known = false; continue; }
+        CL_.sha = res.sha; break;
+      }
+      CL_.at = Date.now(); CL_.err = '';
+    } catch (e) { CL_.err = e.message; CL_.known = false; }
+    finally {
+      CL_.busy = null;
+      if (CL_.again) { CL_.again = false; cloudLater(3000); }
+      if ($('#clState')) $('#clState').innerHTML = cloudStateText();
+    }
+  })();
+  return CL_.busy;
+}
+/** 云端合进来了新东西：停在首页就刷新一下（做题时不打断） */
+function cloudMerged() { if (!S && $('.page.home')) showHome(); }
+function cloudStateText() {
+  if (!CL.cfg()) return '没开';
+  if (CL_.busy) return '正在同步…';
+  if (CL_.err) return `<b style="color:var(--bad)">同步失败：${esc(CL_.err)}</b>`;
+  return CL_.at ? `已同步（${new Date(CL_.at).toLocaleTimeString('zh-CN', { hour12: false })}）` : '还没同步';
+}
+document.addEventListener('visibilitychange', () => {
+  if (!CL.cfg() || !P) return;
+  if (document.hidden) { if (CL_.timer || CL_.again) cloudSync(); }
+  else if (Date.now() - CL_.pulledAt > 60000) { CL_.known = false; cloudSync(); }
+});
 
 // ---------------- 小工具 ----------------
 function toast(msg, ms = 2200) {
@@ -698,7 +754,7 @@ function advance() {
     }
     if (S.mode === 'wrong') {
       const w = P.wrong.find((x) => x.id === task.wrong.id);
-      if (w && w.fixed >= 2) { P.wrong = P.wrong.filter((x) => x !== w); R.stats(P).fixed++; save(); banner('🩹', '这道错题改正了！', '已移出错题本'); checkRewards(); }
+      if (w && w.fixed >= 2) { C.dropWrong(P, (x) => x === w); R.stats(P).fixed++; save(); banner('🩹', '这道错题改正了！', '已移出错题本'); checkRewards(); }
     }
     if (S.ti < S.tasks.length - 1) { S.ti++; beginTask(); } else finishSession();
     return;
@@ -984,7 +1040,7 @@ function showWrongBook() {
   const start = (ws) => startDrill(ws.map((w) => ({ skill: BY[w.skillId], target: 'master', problem: w.problem, wrong: w })), 'wrong');
   if ($('#redoAll')) $('#redoAll').onclick = () => start(items.slice(0, 15));
   $$('[data-redo]').forEach((b) => (b.onclick = () => start([P.wrong.find((w) => w.id === b.dataset.redo)])));
-  $$('[data-del]').forEach((b) => (b.onclick = () => { P.wrong = P.wrong.filter((w) => w.id !== b.dataset.del); save(); showWrongBook(); }));
+  $$('[data-del]').forEach((b) => (b.onclick = () => { C.dropWrong(P, (w) => w.id === b.dataset.del); save(); showWrongBook(); }));
 }
 
 // ---------------- 综合测验 ----------------
@@ -1054,13 +1110,20 @@ async function showParent() {
       <div class="set"><button class="btn pri" id="aiSave">保存</button><button class="btn" id="aitest">测试一下</button>${AIC ? '<button class="btn ghost" id="aiClear" style="color:var(--bad)">清除</button>' : ''}</div>
       <div id="aitestout" class="muted" style="font-size:16px;white-space:pre-wrap"></div>
     </div>
+    <div class="panel"><h3>云端同步</h3>
+      <div class="muted" style="font-size:16px">进度、错题本、星星自动存到你的 GitHub 私有仓库：换 iPad、清了 Safari 数据也不会丢，几台设备共用一份进度。令牌只存在这台设备上，不会出现在导出的进度里。</div>
+      <div class="set"><div class="k">状态</div><div id="clState">${cloudStateText()}</div></div>
+      <div class="set"><div class="k">仓库</div><input type="text" class="wide" id="clRepo" value="${esc(CL.cfg()?.repo || CL.DEFAULT_REPO)}" autocomplete="off" autocapitalize="off" spellcheck="false"></div>
+      <div class="set"><div class="k">令牌<div>GitHub 上生成的 fine-grained token：只选这个仓库，Contents 给 Read and write</div></div><input type="password" class="wide" id="clToken" value="${esc(CL.cfg()?.token || '')}" placeholder="github_pat_…" autocomplete="off" autocapitalize="off" spellcheck="false"></div>
+      <div class="set"><button class="btn pri" id="clSave">保存并同步</button>${CL.cfg() ? '<button class="btn" id="clNow">立即同步</button><button class="btn ghost" id="clOff" style="color:var(--bad)">关闭同步</button>' : ''}</div>
+    </div>
     <div class="panel"><h3>练过的题型（${practiced.length}）</h3>
       <table><tr><th>题型</th><th>科目</th><th>年级</th><th>状态</th><th>做题</th><th>近 20 题正确率</th><th>平均用时</th><th>最近</th></tr>
       ${practiced.map((s) => { const x = P.skills[s.id]; return `<tr><td>${esc(s.name)}</td><td>${SUBJECTS[subj(s)].name}</td><td>${C.termName(s.grade, s.term)}</td><td>${statusLabel[C.status(P, s)] || ''}</td><td>${x.n}</td><td>${Math.round(C.accuracy(x) * 100)}%</td><td>${avg(s)}</td><td>${new Date(x.last).toLocaleDateString('zh-CN')}</td></tr>`; }).join('')}
       </table>${practiced.length ? '' : '<p class="muted">还没开始练</p>'}
     </div>
     <div class="panel"><h3>题库</h3><p class="muted">数学：${GRADES_LOADED.map((g) => C.GRADE_CN[g] + '年级').join('、') || '无'}，共 ${subjSK('math').length} 个题型；语文：${subjSK('yw').length} 个题型（${[...new Set(subjSK('yw').map((s) => s.unit))].sort((a, b) => YW_UNITS.indexOf(a) - YW_UNITS.indexOf(b)).join('、') || '还没有'}）。</p>
-      <p class="muted" style="font-size:15px">进度存在这台 iPad 上。隔一阵导出一份备份；换 iPad 或清了 Safari 数据后用「导入备份」恢复。</p>
+      <p class="muted" style="font-size:15px">${CL.cfg() ? '进度存在这台 iPad 上，并同步到云端。导入备份、清空进度也会同步到其他设备。' : '进度存在这台 iPad 上。没开云端同步时，隔一阵导出一份备份；换 iPad 或清了 Safari 数据后用「导入备份」恢复。'}</p>
       <button class="btn" id="export">导出备份</button> <button class="btn" id="import">导入备份</button><input type="file" id="importFile" accept=".json,application/json" hidden> <button class="btn ghost" id="reset" style="color:var(--bad)">清空所有进度</button></div>
   </div>`;
   $('#back').onclick = showHome;
@@ -1089,6 +1152,16 @@ async function showParent() {
     } catch (e) { out.textContent = '没连上：' + e.message + (/Failed to fetch|Load failed|NetworkError/.test(e.message) ? '\n（这个接口可能不允许浏览器直连，或者网络不通）' : ''); }
     finally { AIC = keep; }
   };
+  $('#clSave').onclick = async () => {
+    const c = { repo: $('#clRepo').value.trim().replace(/^https?:\/\/github\.com\//, '').replace(/\.git$|\/$/g, ''), token: $('#clToken').value.trim() };
+    if (!/^[\w.-]+\/[\w.-]+$/.test(c.repo) || !c.token) return toast('仓库（用户名/仓库名）和令牌都要填');
+    const keep = CL.cfg(); CL.setCfg(c); CL_.known = false; CL_.err = ''; $('#clState').textContent = '正在同步…';
+    await cloudSync();
+    if (CL_.err) { CL.setCfg(keep); $('#clState').innerHTML = `<b style="color:var(--bad)">没连上：${esc(CL_.err)}</b>`; return; }
+    toast('已开启云端同步'); showParent();
+  };
+  if ($('#clNow')) $('#clNow').onclick = async () => { CL_.known = false; $('#clState').textContent = '正在同步…'; await cloudSync(); showParent(); };
+  if ($('#clOff')) $('#clOff').onclick = () => { if (confirm('关闭云端同步？这台设备上的令牌会删掉，云端已经存的进度不动。')) { CL.setCfg(null); CL_.err = ''; CL_.at = 0; showParent(); } };
   $('#import').onclick = () => $('#importFile').click();
   $('#importFile').onchange = async (e) => {
     const f = e.target.files[0]; if (!f) return;
@@ -1096,15 +1169,15 @@ async function showParent() {
       const d = JSON.parse(await f.text());
       if (!d || typeof d !== 'object' || !d.skills || !d.days) throw new Error('不是数学小教练的备份文件');
       if (!confirm(`用备份覆盖现在的进度？\n备份里做过 ${Object.values(d.skills).reduce((a, x) => a + (x.n || 0), 0)} 题、⭐ ${d.stats?.stars || 0}`)) return;
-      const n = C.newProgress(); P = { ...n, ...d, settings: { ...n.settings, ...(d.settings || {}) } }; R.stats(P); homeView = null; save(); toast('已恢复'); showParent();
+      const n = C.newProgress(); P = { ...n, ...d, settings: { ...n.settings, ...(d.settings || {}) }, epoch: Date.now() }; R.stats(P); homeView = null; save(); toast('已恢复'); showParent();
     } catch (err) { toast('导入失败：' + err.message, 3500); }
   };
   $('#export').onclick = () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(P, null, 1)], { type: 'application/json' })); a.download = `数学小教练备份-${C.today()}.json`; a.click(); };
-  $('#reset').onclick = () => { if (confirm('确定清空所有做题记录、星星、徽章和错题本吗？不能恢复。')) { const keep = { name: P.name, grade: P.grade, term: P.term, settings: P.settings }; P = { ...C.newProgress(), ...keep }; R.stats(P); save(); showParent(); } };
+  $('#reset').onclick = () => { if (confirm('确定清空所有做题记录、星星、徽章和错题本吗？不能恢复。')) { const keep = { name: P.name, grade: P.grade, term: P.term, settings: P.settings }; P = { ...C.newProgress(), ...keep, epoch: Date.now() }; R.stats(P); save(); showParent(); } };
 }
 
 // ---------------- 启动 ----------------
-window.__mc = { get S() { return S; }, get SK() { return SK; }, get P() { return P; }, get CH() { return CH; }, get HP() { return HP; }, get homeView() { return homeView; }, startDrill, showHome, showMe, showChallenge, runChallenge, endChallenge }; // 自动化测试用
+window.__mc = { get S() { return S; }, get SK() { return SK; }, get P() { return P; }, get CH() { return CH; }, get HP() { return HP; }, get homeView() { return homeView; }, get CL_() { return CL_; }, startDrill, showHome, showMe, showParent, showChallenge, runChallenge, endChallenge, cloudSync }; // 自动化测试用
 
 (async () => {
   try { navigator.storage?.persist?.(); } catch {}
@@ -1112,4 +1185,5 @@ window.__mc = { get S() { return S; }, get SK() { return SK; }, get P() { return
   await Promise.all([loadContent(), loadProgress()]);
   document.addEventListener('gesturestart', (e) => e.preventDefault());
   showHome();
+  if (CL.cfg()) cloudSync();
 })();

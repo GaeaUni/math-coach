@@ -179,10 +179,65 @@ export function todayPlan(prog, skills) {
 
 /** 错题本：同一题型最多留 8 道，总共 300 道 */
 export function addWrong(prog, sk, problem, given) {
-  prog.wrong = prog.wrong.filter((w) => !(w.skillId === sk.id && w.problem.q === problem.q));
+  dropWrong(prog, (w) => w.skillId === sk.id && w.problem.q === problem.q);
   prog.wrong.unshift({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), skillId: sk.id, problem, given, at: Date.now(), fixed: 0 });
+  capWrong(prog);
+}
+function capWrong(prog) {
   const per = {};
   prog.wrong = prog.wrong.filter((w) => (per[w.skillId] = (per[w.skillId] || 0) + 1) <= 8).slice(0, 300);
+}
+/** 把错题移出错题本，并记下移走的时间：别的设备同步过来时不会再把它加回来 */
+export function dropWrong(prog, pred) {
+  const gone = (prog.gone ||= {}), now = Date.now();
+  prog.wrong = prog.wrong.filter((w) => { if (!pred(w)) return true; gone[w.id] = now; return false; });
+}
+
+// ---------- 几台设备的进度合并（云同步） ----------
+const MERGED = new Set(['skills', 'days', 'wrong', 'gone', 'stats', 'settings', 'updatedAt', 'epoch']);
+/**
+ * 把 o（另一台设备 / 云端的进度）合进 t，原地修改 t（练习中拿着的题型记录对象不会失效）。返回 t 有没有变。
+ * 规则：题型记录取最近练过的那份；每天的记录取做题多的；错题取并集（任一边移走过的不要）；星星、最佳连对取大的，徽章取并集；
+ * 名字、年级、设置取后改的那边。导入备份、清空进度会换 epoch：epoch 不同时整份用 epoch 新的那边，不合并。
+ */
+export function mergeInto(t, o) {
+  if (!o || typeof o !== 'object' || !o.skills) return false;
+  const before = JSON.stringify(t);
+  const te = t.epoch || 0, oe = o.epoch || 0;
+  if (te !== oe) {
+    if (oe < te) return false;
+    for (const k of Object.keys(t)) delete t[k];
+    Object.assign(t, JSON.parse(JSON.stringify(o)));
+    return true;
+  }
+  o = JSON.parse(JSON.stringify(o));
+  if ((o.updatedAt || 0) > (t.updatedAt || 0)) {
+    for (const [k, v] of Object.entries(o)) if (!MERGED.has(k)) t[k] = v;
+    t.settings = { ...t.settings, ...o.settings };
+  }
+  t.skills ||= {};
+  for (const [id, r] of Object.entries(o.skills)) {
+    const m = t.skills[id];
+    if (!m) t.skills[id] = r;
+    else if ((r.last || 0) > (m.last || 0) || ((r.last || 0) === (m.last || 0) && (r.n || 0) > (m.n || 0))) Object.assign(m, r);
+  }
+  t.days ||= {};
+  for (const [d, r] of Object.entries(o.days || {})) { const m = t.days[d]; if (!m) t.days[d] = r; else if ((r.n || 0) > (m.n || 0)) Object.assign(m, r); }
+  const gone = (t.gone ||= {}), old = Date.now() - 120 * DAY;
+  for (const [id, at] of Object.entries(o.gone || {})) gone[id] = Math.max(gone[id] || 0, at);
+  for (const [id, at] of Object.entries(gone)) if (at < old) delete gone[id];
+  const byId = new Map((t.wrong ||= []).map((w) => [w.id, w]));
+  for (const w of o.wrong || []) { const m = byId.get(w.id); if (m) m.fixed = Math.max(m.fixed || 0, w.fixed || 0); else byId.set(w.id, w); }
+  const seen = new Set();
+  t.wrong = [...byId.values()].filter((w) => !gone[w.id]).sort((a, b) => (b.at || 0) - (a.at || 0))
+    .filter((w) => { const k = w.skillId + '\u0000' + w.problem?.q; if (seen.has(k)) return false; seen.add(k); return true; });
+  capWrong(t);
+  const ts = (t.stats ||= {}), os = o.stats || {};
+  for (const [k, v] of Object.entries(os)) if (typeof v === 'number') ts[k] = Math.max(ts[k] || 0, v);
+  const bd = (ts.badges ||= {});
+  for (const [k, v] of Object.entries(os.badges || {})) bd[k] = bd[k] ? Math.min(bd[k], v) : v;
+  t.updatedAt = Math.max(t.updatedAt || 0, o.updatedAt || 0);
+  return JSON.stringify(t) !== before;
 }
 
 export const LEVEL = { 1: '基础', 2: '提高', 3: '拓展' };
